@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>DAI Trading Charts</title>
+	<meta name="description" content="DAI Trading">
+	<meta name="author" content="Sam MacPherson">
+	<link href="https://fonts.googleapis.com/css?family=Roboto:400,500,700,900" rel="stylesheet">
+	<link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
+	<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/chart.js@2.8.0/dist/Chart.min.js"></script>
+	<style>
+	* { margin: 0; padding: 0; }
+	html, body { width: 100%; height: 100%; font-family: 'Roboto', sans-serif; }
+	.wrapper { display: flex; flex-direction: column; height: 100%; }
+	.controls { display: flex; align-items: center; padding: 20px; }
+	.title { flex: 1; font-size: 2rem; font-weight: bold; }
+	.filters { display: flex; }
+	#chart { display: block; }
+	</style>
+</head>
+<body>
+	<div class="wrapper">
+		<div class="controls">
+			<div class="title">DAI Trading Charts</div>
+			<div class="filters"><input class="form-control" id="volume" placeholder="Enter Min Volume (USD)" value="5000"><input type="submit" class="btn btn-primary" id="filter" value="Filter"></div>
+		</div>
+		<canvas id="chart"></canvas>
+	</div>
+	<script>
+		let datasets = [];
+		let colors = [
+            'rgba(255, 99, 132, 0.3)',
+            'rgba(54, 162, 235, 0.3)',
+            'rgba(255, 206, 86, 0.3)',
+            'rgba(75, 192, 192, 0.3)',
+            'rgba(153, 102, 255, 0.3)',
+            'rgba(255, 159, 64, 0.3)',
+            'rgba(185, 135, 118, 0.3)',
+            'rgba(132, 170, 189, 0.3)',
+            'rgba(205, 220, 57, 0.3)',
+            'rgba(63, 81, 181, 0.3)',
+        ];
+        let chart = null;
+		let ctx = document.getElementById('chart').getContext('2d');
+
+		function niceDate (val) {
+			const date = new Date(val*1000);
+			return `${date.getMonth()}-${date.getDate()}`;
+		}
+
+		function buildChart () {
+			let volume = parseFloat($("#volume").val());
+			let filteredData = datasets.map(ex => {
+				const index = datasets.indexOf(ex);
+				const records = ex.records.filter(r => {
+					return r.volume > volume;
+				});
+				const radius = records.map(r => Math.sqrt(r.volume) / 50);
+
+				return {
+					label: ex.exchange,
+					data: records.map(r => {
+						return {
+							x: r.timestamp,
+							y: r.price
+						}
+					}),
+					pointRadius: radius,
+					pointHoverRadius: radius,
+                    backgroundColor: colors[index],
+                    borderColor: colors[index],
+				};
+			});
+
+			if (chart != null) {
+				chart.destroy();
+			}
+			chart = new Chart(ctx, {
+				type: 'scatter',
+				data: {
+					datasets: filteredData
+				},
+				options: {
+					scales: {
+						yAxes: [{
+							display: true,
+							ticks: {
+								min: 0.9,
+								max: 1.1
+							}
+						}],
+						xAxes: [{
+							display: true,
+							ticks: {
+								callback: (label, index, labels) => {
+									return niceDate(label);
+								}
+							}
+						}]
+					},
+					tooltips: {
+						callbacks: {
+							label: function (t, d) {
+								return `${new Date(parseFloat(t.label)).toString()} - ${d.datasets[t.datasetIndex].label} - ${t.value}`;
+							}
+						}
+					}
+				}
+			});
+		}
+
+		$("#filter").click(buildChart)
+
+		async function getHistoricalPriceData (start, end, granularity) {
+			const maxRecords = 300;
+			let delta = end - start;
+			let inc = granularity * maxRecords;
+			delta = Math.ceil(delta / granularity) * granularity;
+			let proms = [];
+			for (let t = 0; t < delta; t += inc) {
+				proms.push($.getJSON(`https://api.pro.coinbase.com/products/ETH-USD/candles?start=${start + t}&granularity=${granularity}`));
+			}
+			return (await Promise.all(proms)).flat().reverse();
+		}
+
+		async function init () {
+			const csvString = await $.get("https://dai.stablecoin.science/data/ethdai-trades-30d.csv");
+
+			// Poor mans csv parser
+			const rows = csvString.split("\r\n").filter(r => r).map(r => r.split(","));
+
+			// Find indicies and dump the first row
+			const timestampIndex = rows[0].indexOf("timestamp");
+			const pairIndex = rows[0].indexOf("pair");
+			const exchangeIndex = rows[0].indexOf("exchange");
+			const amountIndex = rows[0].indexOf("amount");
+			const priceIndex = rows[0].indexOf("price");
+			rows.splice(0, 1);
+
+			const startTime = parseFloat(rows[0][timestampIndex]);
+			const endTime = parseFloat(rows[rows.length - 1][timestampIndex]);
+			const granularity = 3600;
+
+			const coinbasePrices = await getHistoricalPriceData(startTime, endTime, granularity);
+			const exchanges = [...new Set(rows.map(row => row[exchangeIndex]))];
+
+			function getPriceAtTime (timestamp) {
+				let candle = coinbasePrices.find(c => timestamp + granularity < c[0]);
+
+				// Use the last price if we don't have one
+				if (candle == null) candle = coinbasePrices[coinbasePrices.length - 1];
+
+				// Use the high/low average
+				return (candle[1] + candle[2]) / 2;
+			}
+
+			datasets = exchanges.map(exchange => {
+				return {
+					exchange,
+					records: rows
+						.filter(row => exchange == row[exchangeIndex])
+						.map(row => {
+							const timestamp = parseFloat(row[timestampIndex]);
+							const tradePrice = parseFloat(row[priceIndex]);
+							const ethPrice = getPriceAtTime(timestamp);
+							const daiUsdPrice = ethPrice / tradePrice;
+							const volumeUsd = parseFloat(row[amountIndex]) * tradePrice;
+
+							return {
+								timestamp,
+								price: daiUsdPrice,
+								volume: volumeUsd
+							};
+						})
+				};
+			});
+
+			buildChart();
+		}
+		init();
+	</script>
+</body>
+</html>
