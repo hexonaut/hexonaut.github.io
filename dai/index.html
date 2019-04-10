@@ -103,7 +103,7 @@
 					tooltips: {
 						callbacks: {
 							label: function (t, d) {
-								return `${new Date(parseFloat(t.label)).toString()} - ${d.datasets[t.datasetIndex].label} - ${t.value}`;
+								return `${new Date(parseFloat(t.label)*1000).toString()} - ${d.datasets[t.datasetIndex].label} - ${t.value}`;
 							}
 						}
 					}
