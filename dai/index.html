@@ -16,7 +16,8 @@
 	.wrapper { display: flex; flex-direction: column; height: 100%; }
 	.controls { display: flex; align-items: center; padding: 20px; }
 	.title { flex: 1; font-size: 2rem; font-weight: bold; }
-	.filters { display: flex; }
+	.filters { display: flex; align-items: center; }
+	.label { white-space: nowrap; padding-right: 10px; }
 	#chart { display: block; }
 	</style>
 </head>
@@ -24,7 +25,7 @@
 	<div class="wrapper">
 		<div class="controls">
 			<div class="title">DAI Trading Charts</div>
-			<div class="filters"><input class="form-control" id="volume" placeholder="Enter Min Volume (USD)" value="5000"><input type="submit" class="btn btn-primary" id="filter" value="Filter"></div>
+			<div class="filters"><div class="label">Min Volume (USD):</div><input class="form-control" id="volume" placeholder="Enter Min Volume (USD)" value="5000"><input type="submit" class="btn btn-primary" id="filter" value="Filter"></div>
 		</div>
 		<canvas id="chart"></canvas>
 	</div>
