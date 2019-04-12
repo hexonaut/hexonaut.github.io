@@ -9,14 +9,20 @@
 	<link href="https://fonts.googleapis.com/css?family=Roboto:400,500,700,900" rel="stylesheet">
 	<link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
 	<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/moment@2.24.0"></script>
 	<script src="https://cdn.jsdelivr.net/npm/chart.js@2.8.0/dist/Chart.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
+	<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@0.7.0"></script>
+	<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@0.5.7/chartjs-plugin-annotation.min.js"></script>
 	<style>
 	* { margin: 0; padding: 0; }
 	html, body { width: 100%; height: 100%; font-family: 'Roboto', sans-serif; }
 	.wrapper { display: flex; flex-direction: column; height: 100%; }
 	.controls { display: flex; align-items: center; padding: 20px; font-size: 0.8rem; }
+	.price-wrapper { flex: 1; margin-left: 30px; }
+	.price { font-weight: bold; }
 	.title { padding-right: 10px; font-size: 2rem; font-weight: bold; }
-	.subtitle { flex: 1; color: #666; }
+	.subtitle { color: #666; }
 	.filters { display: flex; align-items: flex-end; }
 	.filters > * { margin-left: 10px; }
 	.filters .form-control { width: 120px; }
@@ -27,8 +33,13 @@
 <body>
 	<div class="wrapper">
 		<div class="controls">
-			<div class="title">DAI Trading Charts</div>
-			<div class="subtitle">(Based off data from https://dai.stablecoin.science/)</div>
+			<div class="title-wrapper">
+				<div class="title">DAI Trading Charts</div>
+				<div class="subtitle">Based off data from <a href="https://dai.stablecoin.science/" target="_blank">https://dai.stablecoin.science/</a></div>
+			</div>
+			<div class="price-wrapper">
+				<div class="price-label">Current Price: <span class="price"></span></div>
+			</div>
 			<div class="filters">
 				<div>
 					<div class="label">Min Trade Size (USD):</div>
@@ -53,68 +64,116 @@
             'rgba(205, 220, 57, 0.3)',
             'rgba(63, 81, 181, 0.3)',
         ];
+		let alldata = [];
         let chart = null;
 		let ctx = document.getElementById('chart').getContext('2d');
 
 		function niceDate (val) {
 			const date = new Date(val*1000);
-			return `${date.getMonth()}-${date.getDate()}`;
+			return `${date.getMonth() + 1}-${date.getDate()}`;
 		}
 
 		function buildChart () {
 			let volume = parseFloat($("#volume").val());
+			let filterFunc = r => {
+				return r.volume > volume;
+			};
 			let filteredData = datasets.map(ex => {
 				const index = datasets.indexOf(ex);
-				const records = ex.records.filter(r => {
-					return r.volume > volume;
-				});
+				const records = ex.records.filter(filterFunc);
 				const radius = records.map(r => Math.sqrt(r.volume) / 25);
 
 				return {
 					label: ex.exchange,
 					data: records.map(r => {
 						return {
-							x: r.timestamp,
+							x: new Date(r.timestamp * 1000),
 							y: r.price
 						}
 					}),
 					pointRadius: radius,
 					pointHoverRadius: radius,
                     backgroundColor: colors[index],
-                    borderColor: colors[index],
+                    borderColor: colors[index]
 				};
 			});
+
+			// Add in hourly weighted average
+			function getWeightedBuckets (size) {
+				let min = alldata[0].timestamp;
+				let max = alldata[alldata.length - 1].timestamp;
+
+				var buckets = [];
+				for (let t = min; t < max; t += size) {
+					let bucket = alldata.filter(r => r.timestamp >= t && r.timestamp < t + size);
+					if (bucket.length == 0) continue;
+					buckets.push({
+						x: new Date((t + size/2) * 1000),
+						y: bucket.reduce((val, r) => val + r.price * r.volume, 0) / bucket.reduce((val, r) => val + r.volume, 0)
+					});
+				}
+				return buckets;
+			}
+			let buckets = null;
+			filteredData.push({
+				label: "Weighted Average (Daily)",
+				showLine: true,
+				data: buckets = getWeightedBuckets(86400)
+			});
+
+			// Set the price to the last record of the weighted avg
+			$(".price").text(buckets[buckets.length - 1].y.toFixed(4) + " DAI/USD");
 
 			if (chart != null) {
 				chart.destroy();
 			}
 			chart = new Chart(ctx, {
-				type: 'scatter',
+				type: 'line',
 				data: {
 					datasets: filteredData
 				},
 				options: {
+					showLines: false,
 					scales: {
 						yAxes: [{
-							display: true,
 							ticks: {
 								min: 0.9,
 								max: 1.1
 							}
 						}],
 						xAxes: [{
-							display: true,
-							ticks: {
-								callback: (label, index, labels) => {
-									return niceDate(label);
-								}
+							type: 'time',
+							time: {
+								minUnit: 'day'
 							}
 						}]
 					},
-					tooltips: {
-						callbacks: {
-							label: function (t, d) {
-								return `${new Date(parseFloat(t.label)*1000).toString()} - ${d.datasets[t.datasetIndex].label} - ${t.value}`;
+					annotation: {
+						annotations: [{
+							type: 'line',
+							mode: 'horizontal',
+							scaleID: 'y-axis-0',
+							value: 1,
+							borderColor: 'rgb(255, 0, 0)',
+							borderWidth: 2
+						}]
+					},
+					plugins: {
+						zoom: {
+							pan: {
+								enabled: true,
+								mode: 'x',
+								speed: 10,
+								threshold: 10
+							},
+							zoom: {
+								enabled: true,
+								drag: false,
+								mode: 'x',
+								limits: {
+									max: 10,
+									min: 0.5
+								}
 							}
 						}
 					}
@@ -167,26 +226,28 @@
 				return (candle[1] + candle[2]) / 2;
 			}
 
+			alldata = rows.map(row => {
+				const timestamp = parseFloat(row[timestampIndex]);
+				const tradePrice = parseFloat(row[priceIndex]);
+				const ethPrice = getPriceAtTime(timestamp);
+				const daiUsdPrice = ethPrice / tradePrice;
+				const volumeUsd = parseFloat(row[amountIndex]) * tradePrice;
+
+				return {
+					exchange: row[exchangeIndex],
+					timestamp,
+					price: daiUsdPrice,
+					volume: volumeUsd
+				};
+			})
 			datasets = exchanges.map(exchange => {
 				return {
 					exchange,
-					records: rows
-						.filter(row => exchange == row[exchangeIndex])
-						.map(row => {
-							const timestamp = parseFloat(row[timestampIndex]);
-							const tradePrice = parseFloat(row[priceIndex]);
-							const ethPrice = getPriceAtTime(timestamp);
-							const daiUsdPrice = ethPrice / tradePrice;
-							const volumeUsd = parseFloat(row[amountIndex]) * tradePrice;
-
-							return {
-								timestamp,
-								price: daiUsdPrice,
-								volume: volumeUsd
-							};
-						})
+					records: alldata.filter(row => exchange == row.exchange)
+						
 				};
 			});
+			datasets.sort((a,b) => (a.exchange > b.exchange) ? 1 : ((b.exchange > a.exchange) ? -1 : 0));
 
 			buildChart();
 		}
